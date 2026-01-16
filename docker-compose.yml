@@ -1,0 +1,105 @@
+services:
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    ports:
+      - "${API_PORT:-3000}:3000"
+    environment:
+      # 데이터베이스 설정
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USERNAME=${DB_USERNAME:-root}
+      - DB_PASSWORD=${DB_PASSWORD:-password}
+      - DB_DATABASE=${DB_DATABASE:-pool_tuning}
+
+      # 커넥션 풀 설정 (튜닝 대상)
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-10}
+      - DB_POOL_ACQUIRE_TIMEOUT=${DB_POOL_ACQUIRE_TIMEOUT:-10000}
+      - DB_POOL_IDLE_TIMEOUT=${DB_POOL_IDLE_TIMEOUT:-30000}
+      - DB_QUEUE_LIMIT=${DB_QUEUE_LIMIT:-0}
+
+      # libuv 스레드 풀 설정 (튜닝 대상)
+      - UV_THREADPOOL_SIZE=${UV_THREADPOOL_SIZE:-4}
+
+      # 애플리케이션 설정
+      - NODE_ENV=${NODE_ENV:-production}
+      - DB_LOGGING=${DB_LOGGING:-false}
+      - BCRYPT_ROUNDS=${BCRYPT_ROUNDS:-12}
+      - SHUTDOWN_TIMEOUT=${SHUTDOWN_TIMEOUT:-30000}
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - pool-tuning-network
+
+  mysql:
+    image: mysql:8.0
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_PASSWORD:-password}
+      - MYSQL_DATABASE=${DB_DATABASE:-pool_tuning}
+    volumes:
+      - ./mysql/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./mysql/seed-data.sql:/docker-entrypoint-initdb.d/02-seed.sql
+      - ./mysql/my.cnf:/etc/mysql/conf.d/my.cnf
+      - mysql_data:/var/lib/mysql
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_PASSWORD:-password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - pool-tuning-network
+
+  k6:
+    image: grafana/k6:latest
+    volumes:
+      - ./k6:/scripts
+      - ./k6-results:/results
+    environment:
+      - BASE_URL=http://api:3000
+      - SCENARIO=${K6_SCENARIO:-simple-query}
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-10}
+      - UV_THREADPOOL_SIZE=${UV_THREADPOOL_SIZE:-4}
+    depends_on:
+      api:
+        condition: service_healthy
+    profiles:
+      - test
+    networks:
+      - pool-tuning-network
+    command: ["run", "/scripts/profiles/ramp-up.js"]
+
+networks:
+  pool-tuning-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
