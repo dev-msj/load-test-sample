@@ -5,7 +5,13 @@
 import http from 'k6/http';
 import { sleep } from 'k6';
 import { BASE_URL, endpoints, randomUserId, defaultThresholds } from '../lib/config.js';
-import { checkResponse, collectMetrics, jsonHeaders, errorRate } from '../lib/helpers.js';
+import {
+  jsonHeaders,
+  errorRate,
+  getRampUpLevel,
+  checkResponseWithLevel,
+  collectMetricsWithLevel,
+} from '../lib/helpers.js';
 
 export const options = {
   stages: [
@@ -29,6 +35,8 @@ export const options = {
 
 export default function () {
   const scenario = __ENV.SCENARIO || 'simple-query';
+  const currentVUs = __VU || 1;
+  const level = getRampUpLevel(currentVUs);
   let response;
 
   switch (scenario) {
@@ -80,11 +88,12 @@ export default function () {
       );
   }
 
-  checkResponse(response, scenario);
+  // VUs 레벨별 메트릭 기록
+  checkResponseWithLevel(response, scenario, level);
 
   // 10% 확률로 메트릭 수집
   if (Math.random() < 0.1) {
-    collectMetrics();
+    collectMetricsWithLevel(level);
   }
 
   sleep(0.1);
@@ -110,13 +119,79 @@ export function handleSummary(data) {
     return metric[field] !== undefined ? metric[field] : metric.values?.[field] || 0;
   };
 
-  // 분석 결과 생성
+  // 전체 지표
   const waitingAvg = mRaw('db_waiting_requests', 'avg');
   const waitingMax = mRaw('db_waiting_requests', 'max');
-  const activeMax = mRaw('db_active_connections', 'max');
   const responseP95 = mRaw('http_req_duration', 'p(95)');
   const cpuAvg = mRaw('process_cpu_percent', 'avg');
   const heapPercent = mRaw('process_memory_heap_percent', 'avg');
+
+  // ============================================================
+  // VUs 레벨별 성능 추이 분석
+  // ============================================================
+  const levels = [
+    { name: 'level50', label: '50 VUs', vus: 50 },
+    { name: 'level100', label: '100 VUs', vus: 100 },
+    { name: 'level200', label: '200 VUs', vus: 200 },
+  ];
+
+  const levelData = levels.map(level => {
+    const responseTime = mRaw(`level_${level.vus}_response_time`, 'avg');
+    const responseP95Level = mRaw(`level_${level.vus}_response_time`, 'p(95)');
+    const errRate = mRaw(`level_${level.vus}_error_rate`, 'rate') * 100;
+    const waiting = mRaw(`level_${level.vus}_waiting_requests`, 'avg');
+    return {
+      ...level,
+      responseTime,
+      responseP95: responseP95Level,
+      errorRate: errRate,
+      waitingRequests: waiting,
+      hasData: responseTime > 0,
+    };
+  });
+
+  // 확장성 분석: 부하 증가에 따른 응답 시간 변화
+  let scalabilityAnalysis = '';
+  const level50 = levelData.find(l => l.name === 'level50');
+  const level100 = levelData.find(l => l.name === 'level100');
+  const level200 = levelData.find(l => l.name === 'level200');
+
+  if (level50?.hasData && level100?.hasData) {
+    const increase50to100 = level50.responseTime > 0
+      ? ((level100.responseTime - level50.responseTime) / level50.responseTime) * 100
+      : 0;
+
+    if (increase50to100 < 20) {
+      scalabilityAnalysis += `✅ **50→100 VUs**: 응답 시간 ${increase50to100.toFixed(1)}% 증가 (선형 확장)\n`;
+    } else if (increase50to100 < 50) {
+      scalabilityAnalysis += `🔶 **50→100 VUs**: 응답 시간 ${increase50to100.toFixed(1)}% 증가 (약간의 부하 영향)\n`;
+    } else {
+      scalabilityAnalysis += `⚠️ **50→100 VUs**: 응답 시간 ${increase50to100.toFixed(1)}% 증가 (병목 발생 가능)\n`;
+    }
+  }
+
+  if (level100?.hasData && level200?.hasData) {
+    const increase100to200 = level100.responseTime > 0
+      ? ((level200.responseTime - level100.responseTime) / level100.responseTime) * 100
+      : 0;
+
+    if (increase100to200 < 30) {
+      scalabilityAnalysis += `✅ **100→200 VUs**: 응답 시간 ${increase100to200.toFixed(1)}% 증가 (양호한 확장성)\n`;
+    } else if (increase100to200 < 100) {
+      scalabilityAnalysis += `⚠️ **100→200 VUs**: 응답 시간 ${increase100to200.toFixed(1)}% 증가 (리소스 압박)\n`;
+    } else {
+      scalabilityAnalysis += `🔴 **100→200 VUs**: 응답 시간 ${increase100to200.toFixed(1)}% 증가 (심각한 병목)\n`;
+    }
+  }
+
+  // 커넥션 풀 대기 추이
+  if (level50?.hasData && level200?.hasData) {
+    if (level200.waitingRequests > 10 && level50.waitingRequests < 5) {
+      scalabilityAnalysis += `⚠️ **커넥션 풀 병목**: 50 VUs(${level50.waitingRequests.toFixed(1)}개) → 200 VUs(${level200.waitingRequests.toFixed(1)}개) 대기 증가\n`;
+    } else if (level200.waitingRequests <= 5) {
+      scalabilityAnalysis += `✅ **커넥션 풀 여유**: 200 VUs에서도 대기 요청 ${level200.waitingRequests.toFixed(1)}개\n`;
+    }
+  }
 
   // 병목 분석
   let bottleneckAnalysis = '';
@@ -160,6 +235,15 @@ export function handleSummary(data) {
     recommendations.push('현재 설정이 적절합니다. 부하를 더 높여 한계점을 찾아보세요.');
   }
 
+  // VUs별 성능 추이 테이블 생성
+  const levelTableRows = levelData
+    .filter(l => l.hasData)
+    .map(l => {
+      const status = l.errorRate > 1 ? '🔴' : l.waitingRequests > 10 ? '⚠️' : '✅';
+      return `| ${l.label} | ${l.responseTime.toFixed(0)}ms | ${l.responseP95.toFixed(0)}ms | ${l.waitingRequests.toFixed(1)}개 | ${l.errorRate.toFixed(2)}% | ${status} |`;
+    })
+    .join('\n');
+
   // 마크다운 보고서 생성
   const report = `# 부하 테스트 분석 보고서
 
@@ -175,9 +259,24 @@ export function handleSummary(data) {
 
 ---
 
-## 📊 핵심 성능 지표
+## 📈 VUs 레벨별 성능 추이
+
+> 부하 증가에 따른 성능 변화를 추적하여 시스템의 확장성을 평가합니다.
+
+| VUs 레벨 | 평균 응답 | P95 응답 | 대기 요청 | 에러율 | 상태 |
+|----------|----------|----------|-----------|--------|------|
+${levelTableRows || '| (데이터 없음) | - | - | - | - | - |'}
+
+### 확장성 분석
+
+${scalabilityAnalysis || '✅ 데이터 수집 중... 테스트 완료 후 분석 결과가 표시됩니다.'}
+
+---
+
+## 📊 전체 성능 지표
 
 ### 처리량 (Throughput)
+
 > 서버가 단위 시간당 처리한 요청 수입니다. 높을수록 좋습니다.
 
 | 지표 | 값 | 설명 |
@@ -187,6 +286,7 @@ export function handleSummary(data) {
 | **총 반복 수** | ${m('iterations', 'count')} | 완료된 테스트 시나리오 반복 |
 
 ### 응답 시간 (Response Time)
+
 > 요청을 보내고 응답을 받기까지 걸린 시간입니다. 낮을수록 좋습니다.
 
 | 지표 | 값 | 의미 |
@@ -201,6 +301,7 @@ export function handleSummary(data) {
 > 💡 **P95를 주로 보는 이유**: 평균은 극단값에 왜곡되기 쉽습니다. P95는 "대부분의 사용자 경험"을 대표합니다.
 
 ### 성공률
+
 | 지표 | 값 | 설명 |
 |------|-----|------|
 | **HTTP 실패율** | ${m('http_req_failed', 'value')}% | 4xx, 5xx 응답 비율 |
@@ -246,6 +347,7 @@ export function handleSummary(data) {
 ## 💻 프로세스 리소스
 
 ### CPU 사용량
+
 | 지표 | 값 | 해석 |
 |------|-----|------|
 | **평균** | ${m('process_cpu_percent', 'avg')}% | ${cpuAvg > 80 ? '⚠️ 높음' : cpuAvg > 50 ? '🔶 보통' : '✅ 여유'} |
@@ -253,6 +355,7 @@ export function handleSummary(data) {
 | **P95** | ${m('process_cpu_percent', 'p(95)')}% | 대부분의 시간 동안 CPU 사용률 |
 
 ### 메모리 사용량
+
 | 지표 | 평균 | 최대 | 설명 |
 |------|------|------|------|
 | **RSS** | ${m('process_memory_rss_mb', 'avg')} MB | ${m('process_memory_rss_mb', 'max')} MB | 실제 물리 메모리 사용량 |
@@ -270,6 +373,14 @@ ${bottleneckAnalysis}
 ## 💡 권장 사항
 
 ${recommendations.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+
+---
+
+## 📈 다음 단계
+
+1. **튜닝 필요 시**: 권장사항에 따라 설정 변경 후 재테스트
+2. **안정적이라면**: Stress 테스트로 시스템 한계점 확인
+3. **최종 검증**: Soak 테스트로 장시간 안정성 확인
 
 ---
 
