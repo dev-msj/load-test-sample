@@ -160,3 +160,6 @@ BCRYPT_ROUNDS=12             # CPU 집약 작업 강도
 3. 생성된 브랜치를 원격 레포지토리에 푸쉬
 4. 커밋
 5. PR 생성
+6. `/code-review:code-review`로 PR 리뷰
+7. 리뷰 반영 후 Squash Merge
+8. 머지된 브랜치 삭제 (원격/로컬)
