@@ -8,13 +8,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 기술 스택
 
-- **Backend**: NestJS 10 + TypeORM + MySQL 8
-- **부하 테스트**: k6 (Grafana)
-- **인프라**: Docker Compose
+- Backend: NestJS 10 + TypeORM + MySQL 8
+- 부하 테스트: k6 (Grafana)
+- 인프라: Docker Compose
 
 ## 주요 명령어
 
 ### Docker 환경 실행
+
 ```bash
 # 전체 서비스 시작
 docker compose up -d
@@ -27,6 +28,7 @@ docker compose down
 ```
 
 ### API 개발 (api/ 디렉토리)
+
 ```bash
 cd api
 npm run start:dev    # 개발 모드 (핫 리로드)
@@ -36,6 +38,7 @@ npm run format       # Prettier
 ```
 
 ### k6 부하 테스트
+
 ```bash
 # Ramp-Up 테스트 (~7분, 최대 200 VUs)
 docker compose run --rm k6 run /scripts/profiles/ramp-up.js
@@ -50,9 +53,29 @@ docker compose run --rm k6 run /scripts/profiles/soak.js
 docker compose run --rm k6 run /scripts/scenarios/simple-query.js
 ```
 
+### 베이스라인 기능
+
+```bash
+# 1. 베이스라인 수집 (~6분, 100 VUs)
+docker compose run --rm k6 run -e SAVE_BASELINE=true /scripts/profiles/baseline.js
+
+# 2. 베이스라인 비교 테스트 (기본 tolerance: 20%)
+docker compose run --rm k6 run -e USE_BASELINE=true /scripts/profiles/ramp-up.js
+
+# 3. tolerance 조정 (더 엄격하게)
+docker compose run --rm k6 run -e USE_BASELINE=true -e BASELINE_TOLERANCE=10 /scripts/profiles/ramp-up.js
+```
+
+| 환경변수 | 기본값 | 설명 |
+|---------|--------|------|
+| `SAVE_BASELINE` | `false` | `true`면 결과를 `/results/baseline.json`에 저장 |
+| `USE_BASELINE` | `false` | `true`면 베이스라인 기반 동적 threshold 적용 및 비교 리포트 생성 |
+| `BASELINE_TOLERANCE` | `20` | 허용 편차 (%). P95가 100ms면 tolerance 20%일 때 threshold는 `p(95)<120` |
+
 ## 아키텍처
 
 ### API 구조 (NestJS)
+
 ```
 api/src/
 ├── config/           # 환경변수 기반 설정 (database.config.ts에서 풀 설정)
@@ -63,16 +86,25 @@ api/src/
 ```
 
 ### k6 구조
+
 ```
 k6/
-├── lib/              # 공통 설정 및 헬퍼 (메트릭 수집, 단계별 분석)
-├── profiles/         # 테스트 프로파일 (ramp-up, stress, soak)
+├── lib/              # 공통 설정 및 헬퍼
+│   ├── config.js     # 공통 설정, thresholds, 베이스라인 로드
+│   ├── helpers.js    # 메트릭 수집, 단계별 분석
+│   └── baseline.js   # 베이스라인 로드, 비교, 동적 threshold 생성
+├── profiles/         # 테스트 프로파일
+│   ├── baseline.js   # 베이스라인 수집 전용 (~6분, 100 VUs)
+│   ├── ramp-up.js    # 점진적 부하 증가 (~7분, 최대 200 VUs)
+│   ├── stress.js     # 한계점 찾기 (~22분, 최대 3000 VUs)
+│   └── soak.js       # 장시간 안정성 (~34분, 500 VUs)
 └── scenarios/        # 개별 시나리오 스크립트
 ```
 
 ### 핵심 튜닝 대상
-1. **DB 커넥션 풀** (`DB_POOL_SIZE`): 공식 = TPS × 평균쿼리시간(초)
-2. **libuv 스레드 풀** (`UV_THREADPOOL_SIZE`): 파일 I/O, crypto, bcrypt 등에 영향
+
+1. DB 커넥션 풀 (`DB_POOL_SIZE`): 공식 = TPS × 평균쿼리시간(초)
+2. libuv 스레드 풀 (`UV_THREADPOOL_SIZE`): 파일 I/O, crypto, bcrypt 등에 영향
 
 ## 주요 API 엔드포인트
 
@@ -109,9 +141,10 @@ BCRYPT_ROUNDS=12             # CPU 집약 작업 강도
 
 ### 브랜치 규칙
 
-- **브랜치 전략**: GitHub Flow
-- **브랜치 네이밍**: `<타입>/<이슈번호>-<간단한-설명>`
-- **브랜치 타입**:
+- 브랜치 전략: GitHub Flow
+- 브랜치 네이밍: `<타입>/<이슈번호>-<간단한-설명>`
+  - 예: `feature/12-social-login`, `bugfix/45-login-validation`
+- 브랜치 타입:
   - `feature`: 새 기능 추가
   - `bugfix`: 버그 수정
   - `hotfix`: 긴급 수정 (프로덕션 이슈)
@@ -123,6 +156,7 @@ BCRYPT_ROUNDS=12             # CPU 집약 작업 강도
 계획 승인 후:
 
 1. 이슈 생성
-2. 브랜치 생성 (위 규칙에 따라)
-3. 커밋
-4. PR 생성
+2. 위 규칙에 따라 브랜치 생성
+3. 생성된 브랜치를 원격 레포지토리에 푸쉬
+4. 커밋
+5. PR 생성
