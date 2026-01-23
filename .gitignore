@@ -25,3 +25,4 @@ lerna-debug.log*
 
 # k6 test results
 /k6-results
+.claude/
