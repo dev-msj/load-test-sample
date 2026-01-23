@@ -1,10 +1,21 @@
 /**
  * Ramp-Up 프로파일: 점진적 부하 증가
  * 100 → 500 → 1000 → 2000 TPS
+ *
+ * 베이스라인 비교 사용법:
+ *   docker compose run --rm k6 run -e USE_BASELINE=true /scripts/profiles/ramp-up.js
  */
 import http from 'k6/http';
 import { sleep } from 'k6';
-import { BASE_URL, endpoints, randomUserId, defaultThresholds } from '../lib/config.js';
+import {
+  BASE_URL,
+  endpoints,
+  randomUserId,
+  getThresholds,
+  getBaseline,
+  isUsingBaseline,
+  getBaselineTolerance,
+} from '../lib/config.js';
 import {
   jsonHeaders,
   errorRate,
@@ -12,6 +23,7 @@ import {
   checkResponseWithLevel,
   collectMetricsWithLevel,
 } from '../lib/helpers.js';
+import { compareWithBaseline, formatComparisonReport } from '../lib/baseline.js';
 
 export const options = {
   stages: [
@@ -30,7 +42,7 @@ export const options = {
     // 쿨다운
     { duration: '30s', target: 0 },
   ],
-  thresholds: defaultThresholds,
+  thresholds: getThresholds(),
 };
 
 export default function () {
@@ -235,6 +247,15 @@ export function handleSummary(data) {
     recommendations.push('현재 설정이 적절합니다. 부하를 더 높여 한계점을 찾아보세요.');
   }
 
+  // 베이스라인 비교 (USE_BASELINE=true인 경우)
+  let baselineComparisonReport = '';
+  if (isUsingBaseline()) {
+    const baseline = getBaseline();
+    const tolerance = getBaselineTolerance();
+    const comparison = compareWithBaseline(data, baseline, tolerance);
+    baselineComparisonReport = formatComparisonReport(comparison);
+  }
+
   // VUs별 성능 추이 테이블 생성
   const levelTableRows = levelData
     .filter(l => l.hasData)
@@ -369,6 +390,8 @@ ${scalabilityAnalysis || '✅ 데이터 수집 중... 테스트 완료 후 분�
 ${bottleneckAnalysis}
 
 ---
+
+${baselineComparisonReport}
 
 ## 💡 권장 사항
 

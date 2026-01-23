@@ -1,10 +1,20 @@
 /**
  * Stress 프로파일: 한계점 찾기
  * VUs를 계속 증가시켜 시스템 한계 도달
+ *
+ * 베이스라인 비교 사용법:
+ *   docker compose run --rm k6 run -e USE_BASELINE=true /scripts/profiles/stress.js
  */
 import http from 'k6/http';
 import { sleep } from 'k6';
-import { BASE_URL, endpoints, randomUserId } from '../lib/config.js';
+import {
+  BASE_URL,
+  endpoints,
+  randomUserId,
+  getBaseline,
+  isUsingBaseline,
+  getBaselineTolerance,
+} from '../lib/config.js';
 import {
   collectMetrics,
   jsonHeaders,
@@ -12,7 +22,10 @@ import {
   getStressStage,
   checkResponseWithStage,
 } from '../lib/helpers.js';
+import { compareWithBaseline, formatComparisonReport } from '../lib/baseline.js';
 
+// Stress 테스트는 한계를 찾는 것이므로 관대한 threshold 사용
+// (베이스라인 기반 threshold는 사용하지 않음)
 export const options = {
   stages: [
     // 초기 부하
@@ -246,6 +259,15 @@ export function handleSummary(data) {
     recommendations.push('더 높은 부하로 한계점 재측정 고려');
   }
 
+  // 베이스라인 비교 (USE_BASELINE=true인 경우)
+  let baselineComparisonReport = '';
+  if (isUsingBaseline()) {
+    const baseline = getBaseline();
+    const tolerance = getBaselineTolerance();
+    const comparison = compareWithBaseline(data, baseline, tolerance);
+    baselineComparisonReport = formatComparisonReport(comparison);
+  }
+
   // VUs별 성능 추이 테이블 생성
   const stageTableRows = stageData
     .filter(s => s.hasData)
@@ -380,6 +402,8 @@ ${stageTableRows || '| (데이터 없음) | - | - | - | - | - |'}
 ${bottleneckAnalysis}
 
 ---
+
+${baselineComparisonReport}
 
 ## 💡 권장 사항
 

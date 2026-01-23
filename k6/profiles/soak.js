@@ -1,10 +1,20 @@
 /**
  * Soak 프로파일: 장시간 안정성 테스트
  * 일정 부하를 30분 이상 유지
+ *
+ * 베이스라인 비교 사용법:
+ *   docker compose run --rm k6 run -e USE_BASELINE=true /scripts/profiles/soak.js
  */
 import http from 'k6/http';
 import { sleep } from 'k6';
-import { BASE_URL, endpoints, randomUserId } from '../lib/config.js';
+import {
+  BASE_URL,
+  endpoints,
+  randomUserId,
+  getBaseline,
+  isUsingBaseline,
+  getBaselineTolerance,
+} from '../lib/config.js';
 import {
   jsonHeaders,
   errorRate,
@@ -12,6 +22,7 @@ import {
   checkResponseWithPhase,
   collectMetricsWithPhase,
 } from '../lib/helpers.js';
+import { compareWithBaseline, formatComparisonReport } from '../lib/baseline.js';
 
 // 테스트 시작 시간 저장 (모든 VU에서 공유)
 const TEST_START_TIME = Date.now();
@@ -292,6 +303,15 @@ export function handleSummary(data) {
     recommendations.push('프로덕션 배포 준비 완료');
   }
 
+  // 베이스라인 비교 (USE_BASELINE=true인 경우)
+  let baselineComparisonReport = '';
+  if (isUsingBaseline()) {
+    const baseline = getBaseline();
+    const tolerance = getBaselineTolerance();
+    const comparison = compareWithBaseline(data, baseline, tolerance);
+    baselineComparisonReport = formatComparisonReport(comparison);
+  }
+
   // 시간대별 추이 테이블 생성
   const phaseTableRows = phaseData
     .filter(p => p.hasData)
@@ -450,6 +470,8 @@ ${performanceAnalysis}
 | 에러율 | ${errorRateValue > 1 ? '⚠️ 점검 필요' : '✅ 정상'} |
 
 ---
+
+${baselineComparisonReport}
 
 ## 💡 권장 사항
 
