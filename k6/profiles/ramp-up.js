@@ -24,6 +24,7 @@ import {
   collectMetricsWithLevel,
 } from '../lib/helpers.js';
 import { compareWithBaseline, formatComparisonReport } from '../lib/baseline.js';
+import { evaluateSLA, formatSLAReport, exportSLAResult } from '../lib/sla.js';
 
 export const options = {
   stages: [
@@ -256,6 +257,19 @@ export function handleSummary(data) {
     baselineComparisonReport = formatComparisonReport(comparison);
   }
 
+  // SLA 평가
+  const stageDataForSLA = {};
+  for (const level of levelData) {
+    stageDataForSLA[level.name] = level;
+  }
+
+  const slaEvaluation = evaluateSLA(data, {
+    scenario,
+    profile: 'ramp-up',
+    stageData: stageDataForSLA,
+  });
+  const slaReport = formatSLAReport(slaEvaluation);
+
   // VUs별 성능 추이 테이블 생성
   const levelTableRows = levelData
     .filter(l => l.hasData)
@@ -391,6 +405,10 @@ ${bottleneckAnalysis}
 
 ---
 
+${slaReport}
+
+---
+
 ${baselineComparisonReport}
 
 ## 💡 권장 사항
@@ -429,5 +447,6 @@ ${recommendations.map((r, i) => `${i + 1}. ${r}`).join('\n')}
     'stdout': report,
     [`/results/${filename}.json`]: JSON.stringify(data, null, 2),
     [`/results/${filename}_report.md`]: report,
+    [`/results/${filename}_sla.json`]: exportSLAResult(slaEvaluation),
   };
 }

@@ -23,6 +23,7 @@ import {
   collectMetricsWithPhase,
 } from '../lib/helpers.js';
 import { compareWithBaseline, formatComparisonReport } from '../lib/baseline.js';
+import { evaluateSLA, formatSLAReport, exportSLAResult } from '../lib/sla.js';
 
 // 테스트 시작 시간 저장 (모든 VU에서 공유)
 const TEST_START_TIME = Date.now();
@@ -312,6 +313,19 @@ export function handleSummary(data) {
     baselineComparisonReport = formatComparisonReport(comparison);
   }
 
+  // SLA 평가
+  const stageDataForSLA = {};
+  for (const phase of phaseData) {
+    stageDataForSLA[phase.name] = phase;
+  }
+
+  const slaEvaluation = evaluateSLA(data, {
+    scenario,
+    profile: 'soak',
+    stageData: stageDataForSLA,
+  });
+  const slaReport = formatSLAReport(slaEvaluation);
+
   // 시간대별 추이 테이블 생성
   const phaseTableRows = phaseData
     .filter(p => p.hasData)
@@ -471,6 +485,10 @@ ${performanceAnalysis}
 
 ---
 
+${slaReport}
+
+---
+
 ${baselineComparisonReport}
 
 ## 💡 권장 사항
@@ -507,5 +525,6 @@ ${recommendations.map((r, i) => `${i + 1}. ${r}`).join('\n')}
     'stdout': report,
     [`/results/${filename}.json`]: JSON.stringify(data, null, 2),
     [`/results/${filename}_report.md`]: report,
+    [`/results/${filename}_sla.json`]: exportSLAResult(slaEvaluation),
   };
 }
