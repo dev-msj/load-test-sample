@@ -1,6 +1,6 @@
 # Nestjs specific
 /dist
-/node_modules
+node_modules/
 /build
 /tmp
 
@@ -26,3 +26,7 @@ lerna-debug.log*
 # k6 test results
 /k6-results
 .claude/
+
+# IDE / Tools
+.serena/
+nul
