@@ -6,7 +6,13 @@ import * as bcrypt from 'bcrypt';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import { User, Product, Order, OrderItem, FileRecord } from '../database/entities';
+import {
+  User,
+  Product,
+  Order,
+  OrderItem,
+  FileRecord,
+} from '../database/entities';
 
 @Injectable()
 export class ScenariosService {
@@ -76,7 +82,10 @@ export class ScenariosService {
       .addSelect('user.name', 'userName')
       .addSelect('COUNT(DISTINCT order.id)', 'totalOrders')
       .addSelect('COUNT(orderItem.id)', 'totalItems')
-      .addSelect('COALESCE(SUM(orderItem.quantity * orderItem.unitPrice), 0)', 'totalSpent')
+      .addSelect(
+        'COALESCE(SUM(orderItem.quantity * orderItem.unitPrice), 0)',
+        'totalSpent',
+      )
       .addSelect('COALESCE(AVG(orderItem.unitPrice), 0)', 'avgItemPrice')
       .addSelect('MIN(order.orderDate)', 'firstOrder')
       .addSelect('MAX(order.orderDate)', 'lastOrder')
@@ -266,9 +275,7 @@ export class ScenariosService {
 
     if (random < w.simple) {
       selectedScenario = 'simple';
-      result = await this.simpleQuery(
-        Math.floor(Math.random() * 100000) + 1,
-      );
+      result = await this.simpleQuery(Math.floor(Math.random() * 100000) + 1);
     } else if (random < w.simple + w.complex) {
       selectedScenario = 'complex';
       result = await this.complexQuery(undefined, 50);

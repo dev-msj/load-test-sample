@@ -208,7 +208,8 @@ export class MetricsService implements OnModuleInit {
 
     // 메모리 사용량
     const memUsage = process.memoryUsage();
-    const toMB = (bytes: number) => Math.round((bytes / 1024 / 1024) * 100) / 100;
+    const toMB = (bytes: number) =>
+      Math.round((bytes / 1024 / 1024) * 100) / 100;
 
     return {
       cpu: {
