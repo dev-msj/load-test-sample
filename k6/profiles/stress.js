@@ -23,6 +23,7 @@ import {
   checkResponseWithStage,
 } from '../lib/helpers.js';
 import { compareWithBaseline, formatComparisonReport } from '../lib/baseline.js';
+import { evaluateSLA, formatSLAReport, exportSLAResult } from '../lib/sla.js';
 
 // Stress 테스트는 한계를 찾는 것이므로 관대한 threshold 사용
 // (베이스라인 기반 threshold는 사용하지 않음)
@@ -268,6 +269,19 @@ export function handleSummary(data) {
     baselineComparisonReport = formatComparisonReport(comparison);
   }
 
+  // SLA 평가
+  const stageDataForSLA = {};
+  for (const stage of stageData) {
+    stageDataForSLA[stage.name] = stage;
+  }
+
+  const slaEvaluation = evaluateSLA(data, {
+    scenario,
+    profile: 'stress',
+    stageData: stageDataForSLA,
+  });
+  const slaReport = formatSLAReport(slaEvaluation);
+
   // VUs별 성능 추이 테이블 생성
   const stageTableRows = stageData
     .filter(s => s.hasData)
@@ -403,6 +417,10 @@ ${bottleneckAnalysis}
 
 ---
 
+${slaReport}
+
+---
+
 ${baselineComparisonReport}
 
 ## 💡 권장 사항
@@ -437,5 +455,6 @@ ${recommendations.map((r, i) => `${i + 1}. ${r}`).join('\n')}
     'stdout': report,
     [`/results/${filename}.json`]: JSON.stringify(data, null, 2),
     [`/results/${filename}_report.md`]: report,
+    [`/results/${filename}_sla.json`]: exportSLAResult(slaEvaluation),
   };
 }

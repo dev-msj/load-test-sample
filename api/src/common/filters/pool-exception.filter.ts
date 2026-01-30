@@ -51,7 +51,8 @@ export class PoolExceptionFilter implements ExceptionFilter {
     ) {
       status = HttpStatus.SERVICE_UNAVAILABLE;
       code = 'POOL_EXHAUSTED';
-      message = 'Database connection pool is exhausted. Please try again later.';
+      message =
+        'Database connection pool is exhausted. Please try again later.';
     }
 
     // 타임아웃 에러 처리

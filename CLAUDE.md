@@ -67,16 +67,40 @@ docker compose run --rm k6 run -e USE_BASELINE=true -e BASELINE_TOLERANCE=10 /sc
 ```
 
 | 환경변수 | 기본값 | 설명 |
-|---------|--------|------|
+| - | - | - |
 | `SAVE_BASELINE` | `false` | `true`면 결과를 `/results/baseline.json`에 저장 |
 | `USE_BASELINE` | `false` | `true`면 베이스라인 기반 동적 threshold 적용 및 비교 리포트 생성 |
 | `BASELINE_TOLERANCE` | `20` | 허용 편차 (%). P95가 100ms면 tolerance 20%일 때 threshold는 `p(95)<120` |
+
+### SLA 평가 기능
+
+모든 테스트 프로파일에서 자동으로 SLA(Service Level Agreement) 평가를 수행합니다. 결과는 마크다운 리포트와 JSON 파일로 출력됩니다.
+
+```bash
+# 1. 기본 SLA 테스트 (시나리오별 기본 SLA 적용)
+docker compose run --rm k6 run /scripts/profiles/ramp-up.js
+
+# 2. SLA 완화 테스트 (tolerance 20% 적용)
+docker compose run --rm k6 run -e SLA_TOLERANCE=20 /scripts/profiles/ramp-up.js
+
+# 3. 커스텀 SLA 테스트 (특정 기준 오버라이드)
+docker compose run --rm k6 run -e 'SLA_OVERRIDE={"responseTime":{"p95":500}}' /scripts/profiles/ramp-up.js
+```
+
+| 환경변수 | 기본값 | 설명 |
+| - | - | - |
+| `SLA_OVERRIDE` | - | JSON 형식 커스텀 SLA. 기본 SLA를 오버라이드 |
+| `SLA_TOLERANCE` | `0` | SLA 완화 비율 (%). 20이면 P95 300ms → 360ms |
+
+**출력 파일:**
+- `*_sla.json`: SLA 평가 결과 (자동화용)
+- 마크다운 리포트 내 "SLA 평가 결과" 섹션
 
 ## 아키텍처
 
 ### API 구조 (NestJS)
 
-```
+```text
 api/src/
 ├── config/           # 환경변수 기반 설정 (database.config.ts에서 풀 설정)
 ├── database/entities/  # TypeORM 엔티티 (users, products, orders, order_items, file_records)
@@ -87,12 +111,13 @@ api/src/
 
 ### k6 구조
 
-```
+```text
 k6/
 ├── lib/              # 공통 설정 및 헬퍼
 │   ├── config.js     # 공통 설정, thresholds, 베이스라인 로드
 │   ├── helpers.js    # 메트릭 수집, 단계별 분석
-│   └── baseline.js   # 베이스라인 로드, 비교, 동적 threshold 생성
+│   ├── baseline.js   # 베이스라인 로드, 비교, 동적 threshold 생성
+│   └── sla.js        # SLA 정의, 평가, 리포트 생성
 ├── profiles/         # 테스트 프로파일
 │   ├── baseline.js   # 베이스라인 수집 전용 (~6분, 100 VUs)
 │   ├── ramp-up.js    # 점진적 부하 증가 (~7분, 최대 200 VUs)
@@ -153,13 +178,11 @@ BCRYPT_ROUNDS=12             # CPU 집약 작업 강도
 
 ### 구현 절차
 
-계획 승인 후:
+글로벌 작업 절차(4-12단계)를 따른다.
 
-1. 이슈 생성
-2. 위 규칙에 따라 브랜치 생성
-3. 생성된 브랜치를 원격 레포지토리에 푸쉬
-4. 커밋
-5. PR 생성
-6. `/code-review:code-review`로 PR 리뷰
-7. 리뷰 반영 후 Squash Merge
-8. 머지된 브랜치 삭제 (원격/로컬)
+프로젝트 특화 규칙:
+
+- 브랜치 네이밍: `<타입>/<이슈번호>-<간단한-설명>`
+- 브랜치 생성 후 원격에 push: `git checkout -b <branch> && git push -u origin <branch>`
+- 머지 전략: Squash Merge
+- 머지 후: 브랜치 삭제 (원격/로컬)

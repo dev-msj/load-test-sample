@@ -12,6 +12,7 @@ import { sleep } from 'k6';
 import { BASE_URL, endpoints, randomUserId, defaultThresholds } from '../lib/config.js';
 import { jsonHeaders, errorRate, checkResponse, collectMetrics } from '../lib/helpers.js';
 import { createBaselineFromSummary } from '../lib/baseline.js';
+import { evaluateSLA, formatSLAReport, exportSLAResult } from '../lib/sla.js';
 
 // 환경변수
 const SAVE_BASELINE = __ENV.SAVE_BASELINE === 'true';
@@ -119,9 +120,19 @@ export function handleSummary(data) {
   const responseP95 = mRaw('http_req_duration', 'p(95)');
   const responseP99 = mRaw('http_req_duration', 'p(99)');
 
+  // SLA 평가
+  const slaEvaluation = evaluateSLA(data, {
+    scenario: SCENARIO,
+    profile: 'baseline',
+  });
+  const slaReport = formatSLAReport(slaEvaluation);
+
   // 베이스라인 저장 여부 확인
   let baselineMessage = '';
   const outputs = {};
+
+  // SLA 평가 결과 파일 추가
+  outputs[`/results/baseline_${SCENARIO}_sla.json`] = exportSLAResult(slaEvaluation);
 
   if (SAVE_BASELINE) {
     const baseline = createBaselineFromSummary(data, {
@@ -203,6 +214,10 @@ export function handleSummary(data) {
 ## 💾 베이스라인 저장 상태
 
 ${baselineMessage}
+
+---
+
+${slaReport}
 
 ---
 
