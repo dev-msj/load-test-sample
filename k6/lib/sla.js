@@ -134,10 +134,10 @@ export const profileSLA = {
  * 우선순위: 환경변수 > 시나리오별 > 기본값
  *
  * @param {string} scenario - 시나리오 이름
- * @param {string} profile - 프로파일 이름 (선택)
+ * @param {string} _profile - 프로파일 이름 (향후 확장용, 현재 미사용)
  * @returns {object} SLA 설정
  */
-export function getSLA(scenario, profile) {
+export function getSLA(scenario, _profile) {
   // 환경변수 오버라이드 처리
   let overrideSLA = null;
   if (SLA_OVERRIDE) {
@@ -315,17 +315,20 @@ export function evaluateSLA(data, options = {}) {
  * @returns {object} 평가 결과
  */
 function evaluateItem(category, metric, slaValue, actualValue, unit, higherIsBetter = false) {
-  const deviation = ((actualValue - slaValue) / slaValue) * 100;
+  // slaValue가 0일 때 division by zero 방어
+  const deviation = slaValue !== 0 ? ((actualValue - slaValue) / slaValue) * 100 : 0;
   let passed;
   let score;
 
   if (higherIsBetter) {
     // 높을수록 좋은 지표 (가용성, 처리량)
     passed = actualValue >= slaValue;
-    score = Math.min(100, Math.round((actualValue / slaValue) * 100));
+    score = slaValue > 0
+      ? Math.min(100, Math.round((actualValue / slaValue) * 100))
+      : (actualValue > 0 ? 100 : 0);
   } else {
     // 낮을수록 좋은 지표 (응답 시간, 에러율)
-    // 점수 계산: 0 이하면 100점, SLA 이하면 50-100점, SLA 초과면 0-50점
+    // 점수 계산: SLA 이하면 50-100점, SLA 초과면 0-50점
     passed = actualValue <= slaValue;
     const ratio = slaValue > 0 ? actualValue / slaValue : 0;
     score = Math.max(0, Math.min(100, Math.round((1 - ratio) * 50 + 50)));
@@ -532,14 +535,16 @@ function mergeSLA(base, override) {
 }
 
 /**
- * SLA에 tolerance 적용
+ * SLA에 tolerance 적용 (SLA 기준 완화)
  *
  * @param {object} sla - 원본 SLA
- * @param {number} tolerance - 완화 비율 (%)
+ * @param {number} tolerance - 완화 비율 (%, 0 이상)
  * @returns {object} tolerance 적용된 SLA
  */
 function applySLATolerance(sla, tolerance) {
-  const factor = 1 + tolerance / 100;
+  // 음수 tolerance는 무시 (완화만 지원)
+  const safeTolerance = Math.max(0, tolerance);
+  const factor = 1 + safeTolerance / 100;
   const result = { ...sla };
 
   // 응답 시간: 기준값 증가 (완화)
@@ -557,7 +562,7 @@ function applySLATolerance(sla, tolerance) {
 
   // 가용성: 기준값 감소 (완화)
   if (result.availability !== undefined) {
-    result.availability = Math.max(0, result.availability - tolerance * 0.01);
+    result.availability = Math.max(0, result.availability - safeTolerance * 0.01);
   }
 
   // 처리량: 기준값 감소 (완화)
